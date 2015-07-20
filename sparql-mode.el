@@ -144,9 +144,7 @@ SPARQL query."
       (error "URL '%s' is not accessible" endpoint-url))
     (with-current-buffer sparql-results-buffer
       (let ((buffer-read-only nil))
-        (if (and (<= 200 response) (<= response 299))
-            (url-insert results-buffer)
-          (insert results-buffer))
+        (url-insert results-buffer)
         (setq mode-name "SPARQL[finished]")))))
 
 (defun sparql-execute-query (query &optional synch url format)
@@ -155,19 +153,27 @@ SPARQL query."
 otherwise it is asynchronously. `format' specifies the return
 format of the response from the server."
   (let ((url-request-method "POST")
-	(url-request-extra-headers
-	 `(("Content-Type" . "application/x-www-form-urlencoded")))
-	(url-mime-accept-string (or format (sparql-get-format)))
-	(url-request-data (concat "query=" (url-hexify-string query))))
+        (url-request-extra-headers
+         `(("Content-Type" . "application/x-www-form-urlencoded")))
+        (url-mime-accept-string (or format (sparql-get-format)))
+        (url-request-data (concat "query=" (url-hexify-string (sparql--clean-query query)))))
     (if synch
-	(with-temp-buffer
-	  (let ((results-buffer (current-buffer)))
-	    (with-current-buffer (url-retrieve-synchronously url)
-	      (sparql-handle-results nil results-buffer)))
-	  (buffer-string))
+        (with-temp-buffer
+          (let ((results-buffer (current-buffer)))
+            (with-current-buffer (url-retrieve-synchronously url)
+              (sparql-handle-results nil results-buffer)))
+          (buffer-string))
       (url-retrieve (or url (sparql-get-base-url))
-		    #'sparql-handle-results
-		    (list sparql-results-buffer)))))
+                    #'sparql-handle-results
+                    (list sparql-results-buffer)))))
+
+(defun sparql--clean-query (string)
+  "Clean the given query of extranous comments"
+  (with-temp-buffer
+    (insert string)
+    (beginning-of-buffer)
+    (delete-matching-lines "^\\#.*")
+    (buffer-substring-no-properties (point-min) (point-max))))
 
 (defun sparql-query-region ()
   "Submit the active region as a query to a SPARQL HTTP endpoint.
@@ -175,11 +181,14 @@ If the region is not active, use the whole buffer."
   (interactive)
   (let* ((beg (if (region-active-p) (region-beginning) (point-min)))
          (end (if (region-active-p) (region-end) (point-max)))
-         (query (buffer-substring beg end)))
-    (with-current-buffer (get-buffer-create (format "*SPARQL: %s*" (buffer-name)))
-      (sparql-result-mode t)
+         (query (buffer-substring-no-properties beg end))
+         (buf (get-buffer-create (format "*SPARQL: %s*" (buffer-name)))))
+    (with-current-buffer buf
+      (unless (eq major-mode 'sparql-result-mode)
+        (sparql-result-mode))
       (let ((buffer-read-only nil))
-	(delete-region (point-min) (point-max))))
+        (delete-region (point-min) (point-max))))
+    (setq sparql-results-buffer buf)
     (sparql-execute-query query)
     (view-buffer-other-window sparql-results-buffer)
     (other-window -1)))
